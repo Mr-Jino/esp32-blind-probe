@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 盲探 · 体检报告</title>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#151a21; --panel2:#1b222b; --line:#252e3a;
+    --txt:#e6edf3; --dim:#8b98a5; --dim2:#5d6b7a;
+    --pass:#3fb950; --fail:#f85149; --warn:#d29922; --accent:#4493f8;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--txt);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header{
+    position:sticky; top:0; z-index:5;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:12px 20px; background:rgba(13,16,20,.92); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex; align-items:baseline; gap:10px; margin-right:auto}
+  .brand b{font-size:15px; font-weight:600; letter-spacing:.2px}
+  .brand span{font-size:12px; color:var(--dim2); font-family:var(--mono)}
+  .ctrl{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  button{
+    appearance:none; border:1px solid var(--line); background:var(--panel2); color:var(--txt);
+    padding:7px 14px; border-radius:7px; font-size:13px; cursor:pointer;
+    transition:border-color .15s, background .15s, opacity .15s;
+  }
+  button:hover:not(:disabled){border-color:#3a4a5c; background:#222b36}
+  button:disabled{opacity:.42; cursor:not-allowed}
+  button.primary{background:#1f6feb; border-color:#1f6feb; color:#fff}
+  button.primary:hover:not(:disabled){background:#2b7cf0}
+  button.ghost{background:transparent}
+  .status{
+    display:inline-flex; align-items:center; gap:7px;
+    font-family:var(--mono); font-size:12px; padding:6px 12px;
+    border-radius:999px; border:1px solid var(--line); background:var(--panel);
+    color:var(--dim); white-space:nowrap;
+  }
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--dim2); flex:none}
+  .status.on{color:var(--pass); border-color:rgba(63,185,80,.4)}
+  .status.on .dot{background:var(--pass); box-shadow:0 0 0 3px rgba(63,185,80,.15)}
+  .status.err{color:var(--fail); border-color:rgba(248,81,73,.4)}
+  .status.err .dot{background:var(--fail)}
+
+  main{flex:1; padding:22px 20px 8px; max-width:1080px; width:100%; margin:0 auto}
+  h2{
+    font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--dim2); margin:0 0 12px;
+  }
+  .stages{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:28px}
+  .stage{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:12px 10px; min-height:92px; display:flex; flex-direction:column; gap:6px;
+    transition:border-color .2s, background .2s;
+  }
+  .stage .no{font-family:var(--mono); font-size:11px; color:var(--dim2)}
+  .stage .ttl{font-size:12.5px; line-height:1.4; color:var(--dim); flex:1}
+  .stage .mk{font-size:16px; line-height:1; font-weight:700}
+  .stage.pending{opacity:.62}
+  .stage.pass{border-color:rgba(63,185,80,.45); background:rgba(63,185,80,.06)}
+  .stage.pass .mk{color:var(--pass)}
+  .stage.fail{border-color:rgba(248,81,73,.45); background:rgba(248,81,73,.06)}
+  .stage.fail .mk{color:var(--fail)}
+  .stage.warn{border-color:rgba(210,153,34,.45); background:rgba(210,153,34,.06)}
+  .stage.warn .mk{color:var(--warn)}
+  .stage.pass .ttl,.stage.fail .ttl,.stage.warn .ttl{color:var(--txt)}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden}
+  table{width:100%; border-collapse:collapse}
+  th{
+    text-align:left; font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--dim2); padding:11px 14px; border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  td{padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; font-size:13px}
+  tr:last-child td{border-bottom:none}
+  td.v{white-space:nowrap; font-weight:600}
+  td.v.pass{color:var(--pass)} td.v.fail{color:var(--fail)} td.v.warn{color:var(--warn)}
+  td.v.pending{color:var(--dim2); font-weight:400}
+  td.pins{font-family:var(--mono); font-size:12px; color:var(--dim)}
+  td.detail{color:var(--dim); font-size:12.5px}
+  .empty{padding:34px 14px; text-align:center; color:var(--dim2); font-size:13px}
+
+  footer{
+    border-top:1px solid var(--line); padding:14px 20px; margin-top:22px;
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    background:rgba(13,16,20,.9);
+  }
+  footer .note{font-size:12px; color:var(--dim2); margin-left:auto; text-align:right; line-height:1.5}
+  details.what{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:10px 16px; margin-bottom:20px; font-size:13px;
+  }
+  details.what summary{
+    cursor:pointer; color:var(--accent); font-weight:500; user-select:none;
+  }
+  details.what .what-body{color:var(--dim); line-height:1.8; padding-top:8px}
+  details.what .what-body b{color:var(--txt)}
+  details.what .what-body p{margin:6px 0}
+  kbd{
+    font-family:var(--mono); font-size:11px; background:var(--panel2);
+    border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:1px 5px;
+  }
+  .lg{display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--dim); margin:0 12px 2px 0}
+  .lg i{width:10px; height:10px; border-radius:2px; display:inline-block; flex:none}
+  @media (max-width:860px){
+    .stages{grid-template-columns:repeat(3,1fr)}
+    .brand span{display:none}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>ESP32 盲探 · 体检报告</b><span id="portInfo">Web Serial · 115200</span></div>
+  <div class="ctrl">
+    <button id="btnConnect" class="primary">选择串口并连接</button>
+    <button id="btnRun" disabled title="给板子发字母 r，让它重跑一次体检">重新体检</button>
+    <button id="btnDisconnect" disabled>断开</button>
+    <button id="btnDemo" class="ghost" title="不连板子，用一段示例数据看效果">示例回放</button>
+    <span id="status" class="status"><i class="dot"></i><span id="statusText">未连接</span></span>
+  </div>
+</header>
+
+<main>
+  <details class="what">
+    <summary>这是什么？怎么用？（点开看 30 秒说明）</summary>
+    <div class="what-body">
+      <p><b>这是什么：</b>一个"量线"工具。它不猜你插的是什么模块——型号千万种猜不完——它只量三件事：<b>每根引脚是高是低还是悬空</b>、<b>I2C 总线上有没有设备应答</b>（报出地址，型号自己查）、<b>SPI Flash 能不能读出 ID</b>。板子和接线好不好，一次体检就知道。</p>
+      <p><b>怎么用：</b>① 用数据线把 ESP32 插电脑 → ② 点右上角「选择串口并连接」→ ③ 点「重新体检」（或按板子上的 RST 键）→ 六个阶段逐个亮起，绿勾=没问题、黄叹号=值得看一眼、红叉=有问题。</p>
+      <p><b>看不懂结论？</b>点底部「导出 report.md」，把文件发给懂的人，他一眼就能告诉你哪根线出了问题。</p>
+      <p><b>注意别误读：</b>「悬空」不代表没插东西——屏的 SCK/CS/DC、按键这类<b>高阻输入</b>外设插着也是悬空；「被拉低」也不一定是故障，很多模块自带下拉电阻。<b>成组异常</b>或<b>I2C 明明插着却扫不到</b>，才值得动手查线。</p>
+    </div>
+  </details>
+
+  <h2>六个阶段</h2>
+  <section class="stages" id="stages" aria-live="polite"></section>
+
+  <h2>引脚图</h2>
+  <section id="pinmap"></section>
+
+  <h2>结论</h2>
+  <section class="card">
+    <table>
+      <thead>
+        <tr><th style="width:64px">阶段</th><th style="width:200px">结论</th><th style="width:96px">判定</th><th style="width:170px">引脚</th><th>说明</th></tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5" class="empty">还没有数据 — 点右上角「选择串口并连接」，或用「示例回放」先看效果</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <button id="btnMd" disabled>导出 report.md</button>
+  <button id="btnJson" disabled>导出 report.json</button>
+  <button id="btnClear" class="ghost" disabled>清空</button>
+  <div class="note">
+    全部在本地解析，不上传任何数据 · 需要 <kbd>Chrome</kbd> / <kbd>Edge</kbd>（Firefox 151+、Safari 不支持）
+  </div>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  const STAGE_TOTAL = 6;
+  const PREFIX = '##RESULT';
+  const VERDICT = {
+    pass: { mark: '✓', label: '通过',   cls: 'pass' },
+    fail: { mark: '✕', label: '未通过', cls: 'fail' },
+    warn: { mark: '!', label: '注意',   cls: 'warn' }
+  };
+
+  const el = {
+    stages: document.getElementById('stages'),
+    tbody: document.getElementById('tbody'),
+    status: document.getElementById('status'),
+    statusText: document.getElementById('statusText'),
+    portInfo: document.getElementById('portInfo'),
+    btnConnect: document.getElementById('btnConnect'),
+    btnDisconnect: document.getElementById('btnDisconnect'),
+    btnDemo: document.getElementById('btnDemo'),
+    btnMd: document.getElementById('btnMd'),
+    btnJson: document.getElementById('btnJson'),
+    btnClear: document.getElementById('btnClear'),
+    btnRun: document.getElementById('btnRun')
+  };
+
+  const S = {
+    port: null,
+    reader: null,
+    writer: null,
+    pipeDone: null,
+    keepReading: false,
+    opening: false,
+    tearing: false,
+    demo: false,
+    lineCount: 0,
+    results: new Map(),      // stage -> record
+    rawLines: [],
+    portLabel: '',
+    connected: false
+  };
+
+  /* ---------------- 渲染 ---------------- */
+
+  function setStatus(text, kind) {
+    el.statusText.textContent = text;
+    el.status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function verdictOf(v) {
+    return VERDICT[String(v || '').toLowerCase()] || { mark: '?', label: '未知', cls: 'warn' };
+  }
+
+  function render() {
+    // 阶段卡片
+    let html = '';
+    for (let i = 1; i <= STAGE_TOTAL; i++) {
+      const r = S.results.get(i);
+      const v = r ? verdictOf(r.verdict) : null;
+      const cls = r ? v.cls : 'pending';
+      const title = r ? (r.title || '阶段 ' + i) : '等待数据';
+      const mark = r ? v.mark : '·';
+      html += `<div class="stage ${cls}">
+          <div class="no">STAGE ${i}</div>
+          <div class="ttl">${esc(title)}</div>
+          <div class="mk">${mark}</div>
+        </div>`;
+    }
+    el.stages.innerHTML = html;
+
+    // 结论表
+    if (!S.results.size) {
+      el.tbody.innerHTML = '<tr><td colspan="5" class="empty">还没有数据 — 点右上角「选择串口并连接」，或用「示例回放」先看效果</td></tr>';
+    } else {
+      const rows = [...S.results.values()].sort((a, b) => a.stage - b.stage);
+      el.tbody.innerHTML = rows.map(r => {
+        const v = verdictOf(r.verdict);
+        const pins = Array.isArray(r.pins) ? r.pins.join(' · ') : (r.pins || '');
+        return `<tr>
+          <td class="pins">${esc(String(r.stage))}</td>
+          <td>${esc(r.title || '')}</td>
+          <td class="v ${v.cls}">${v.mark} ${v.label}</td>
+          <td class="pins">${esc(pins || '—')}</td>
+          <td class="detail">${esc(r.detail || '')}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    const has = S.results.size > 0;
+    el.btnMd.disabled = !has;
+    el.btnJson.disabled = !has;
+    el.btnClear.disabled = !has;
+    renderPinMap();
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /* ---------------- 数据解析 ---------------- */
+
+  function handleLine(line) {
+    if (!line) return;
+    S.rawLines.push(line);
+    if (S.connected && !S.demo) {
+      // 让用户知道数据确实在流动
+      setStatus(`已连接 · 收到 ${S.rawLines.length} 行 · 结论 ${S.results.size}/6`, 'on');
+    }
+    const i = line.indexOf(PREFIX);
+    if (i < 0) return;
+
+    const json = line.slice(i + PREFIX.length).trim();
+    let obj;
+    try { obj = JSON.parse(json); } catch { return; }
+
+    const stage = Number(obj.stage);
+    if (!Number.isInteger(stage) || stage < 1 || stage > STAGE_TOTAL) return;
+
+    S.results.set(stage, {
+      stage,
+      title: obj.title == null ? '阶段 ' + stage : String(obj.title),
+      verdict: obj.verdict == null ? 'warn' : String(obj.verdict),
+      pins: obj.pins == null ? [] : obj.pins,
+      detail: obj.detail == null ? '' : String(obj.detail),
+      raw: obj.raw == null ? '' : String(obj.raw)
+    });
+    render();
+
+    if (S.results.size === STAGE_TOTAL) {
+      if (S.connected) setStatus(`体检完成 · 6/6（共 ${S.rawLines.length} 行）`, 'on');
+    }
+  }
+
+  /* ---------------- 串口 ---------------- */
+
+  const supportsSerial = 'serial' in navigator;
+
+  async function connect() {
+    if (!supportsSerial) {
+      setStatus('此浏览器不支持 Web Serial，请用 Chrome / Edge', 'err');
+      return;
+    }
+    if (S.opening || S.connected) return;          // 防连点 / 防重复打开同一个口
+    S.opening = true;
+    el.btnConnect.disabled = true;
+    try {
+      const port = await navigator.serial.requestPort();
+      if (S.connected) return;                     // 用户在弹窗期间又发生了别的连接
+      await port.open({ baudRate: 115200, bufferSize: 4096 });
+
+      // 写入通道：给板子发 "r" 让它重跑体检
+      try {
+        const enc = new TextEncoderStream();
+        S.writeDone = enc.readable.pipeTo(port.writable).catch(() => {});
+        S.writer = enc.writable.getWriter();
+      } catch (e) {
+        S.writer = null;   // 有的设备只读，不影响看数据
+      }
+
+      S.port = port;
+      S.connected = true;
+      S.keepReading = true;
+      S.lineCount = 0;
+      S.results.clear();
+      S.rawLines = [];
+      render();
+      S.portLabel = describePort(port);
+      el.portInfo.textContent = S.portLabel;
+      el.btnDisconnect.disabled = false;
+      el.btnRun.disabled = false;
+      setStatus('已连接 · 点「重新体检」或按板子 RST', 'on');
+
+      port.addEventListener('disconnect', onPortGone);
+      readLoop(port);
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      if (err && err.name === 'NotFoundError') {
+        setStatus('未选择设备', '');
+      } else if (/already open/i.test(msg)) {
+        setStatus('该串口已被占用（可能上一次连接还没释放完），重试一次', 'err');
+        await teardown(false);
+      } else {
+        setStatus('打开串口失败：' + msg, 'err');
+        await teardown(false);
+      }
+    } finally {
+      S.opening = false;
+      el.btnConnect.disabled = S.connected;
+    }
+  }
+
+  function describePort(port) {
+    try {
+      const info = port.getInfo ? port.getInfo() : {};
+      if (info.usbVendorId != null) {
+        const hex = n => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
+        return `USB ${hex(info.usbVendorId)}:${info.usbProductId != null ? hex(info.usbProductId) : '----'}`;
+      }
+    } catch {}
+    return '串口设备';
+  }
+
+  async function sendLine(text) {
+    if (!S.writer) return false;
+    try {
+      await S.writer.write(text + '\n');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function readLoop(port) {
+    let reader = null;
+    try {
+      const decoderStream = new TextDecoderStream();
+      S.pipeDone = port.readable.pipeTo(decoderStream.writable).catch(() => {});
+      reader = decoderStream.readable.getReader();
+      S.reader = reader;
+
+      let buf = '';
+      while (S.keepReading) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        buf += value;
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          handleLine(buf.slice(0, idx).replace(/\r$/, ''));
+          buf = buf.slice(idx + 1);
+        }
+        if (buf.length > 8192) buf = '';   // 防止没有换行的垃圾数据把内存撑爆
+      }
+    } catch (err) {
+      // 拔线时这里会抛错，属于正常路径
+    } finally {
+      try { reader && reader.releaseLock(); } catch {}
+      onPortGone();
+    }
+  }
+
+  function onPortGone() {
+    if (!S.connected && !S.port) return;
+    teardown(true);
+  }
+
+  async function teardown(showMessage) {
+    if (S.tearing) return;                         // 单飞：断开流程只跑一次
+    S.tearing = true;
+    S.keepReading = false;
+    S.connected = false;
+
+    try { if (S.reader) await S.reader.cancel(); } catch {}
+    try { if (S.writer) await S.writer.close(); } catch {}
+    try { if (S.pipeDone) await S.pipeDone; } catch {}   // 等管道真正排空，再关口
+    try { if (S.writeDone) await S.writeDone; } catch {}
+    S.reader = null;
+    S.writer = null;
+    S.pipeDone = null;
+    S.writeDone = null;
+
+    if (S.port) {
+      try { S.port.removeEventListener('disconnect', onPortGone); } catch {}
+      try { await S.port.close(); } catch {}
+      S.port = null;
+    }
+
+    el.btnConnect.disabled = false;
+    el.btnDisconnect.disabled = true;
+    el.btnRun.disabled = true;
+    if (showMessage) setStatus('设备已断开', 'err');
+    S.tearing = false;
+  }
+
+  /* ---------------- 示例回放（不连板，纯本地） ---------------- */
+
+  const DEMO = [
+    { stage: 1, title: '供电与芯片握手', verdict: 'pass', pins: ['3V3', 'GND'], detail: '检测到 ESP32-S3 rev v0.2，Flash 16MB / PSRAM 8MB', raw: 'chip=ESP32-S3 rev0.2 flash=16MB psram=8MB' },
+    { stage: 2, title: '串口链路', verdict: 'pass', pins: ['TX', 'RX'], detail: '115200 8N1，回环正常，丢包 0', raw: 'loopback ok, 1024 bytes, loss=0' },
+    { stage: 3, title: 'I2C 总线扫描', verdict: 'pass', pins: ['SDA=8', 'SCL=9'], detail: '发现 2 个设备：0x23（光照）、0x44（温湿度）', raw: 'found=0x23,0x44' },
+    { stage: 4, title: 'SPI 屏探测', verdict: 'warn', pins: ['SCK=12', 'MOSI=11', 'CS=10'], detail: '写命令有响应但读回全 0x00，多数屏不可读，属正常现象', raw: 'miso=0x00 (write-only panel?)' },
+    { stage: 5, title: '引脚冲突自检', verdict: 'pass', pins: ['GPIO35-37', 'GPIO19-20'], detail: '未触碰 PSRAM/USB 占用脚，无冲突', raw: 'reserved=35,36,37,19,20 clear' },
+    { stage: 6, title: '综合结论', verdict: 'fail', pins: ['GPIO17'], detail: 'PIR 信号线持续为低且上拉无效，疑似未接线', raw: 'pir=0 pullup=0 => floating' }
+  ];
+
+  function runDemo() {
+    if (S.connected) {
+      setStatus('示例回放中（已连接状态下请先断开）', 'err');
+      return;
+    }
+    S.results.clear();
+    S.rawLines = [];
+    S.demo = true;
+    render();
+    el.btnDemo.disabled = true;
+    setStatus('示例回放 · 假数据', 'on');
+
+    let i = 0;
+    const tick = () => {
+      if (i >= DEMO.length) {
+        setStatus('示例回放结束 · 6/6（假数据）', 'on');
+        el.btnDemo.disabled = false;
+        S.demo = false;
+        return;
+      }
+      handleLine(PREFIX + ' ' + JSON.stringify(DEMO[i++]));
+      setTimeout(tick, 520);
+    };
+    setTimeout(tick, 260);
+  }
+
+  /* ---------------- 引脚图 ---------------- */
+
+  // 常见 ESP32-S3 DevKit 板型（左右两排各 22 脚）。板型不同时看丝印，颜色是对的。
+  const PIN_LAYOUT = {
+    left:  ['3V3','3V3','RST','4','5','6','7','15','16','17','18','8','3','46','9','10','11','12','13','14','5V','GND'],
+    right: ['GND','TX','RX','1','2','42','41','40','39','38','37','36','35','0','45','48','47','21','20','19','GND','5V']
+  };
+  const SYSTEM_PIN = { 19:'USB', 20:'USB', 26:'Flash', 27:'Flash', 28:'Flash', 29:'Flash', 30:'Flash', 31:'Flash', 32:'Flash', 33:'PSRAM', 34:'PSRAM', 35:'PSRAM', 36:'PSRAM', 37:'PSRAM', 43:'日志', 44:'日志' };
+  const STATE_INFO = {
+    F: { fill: '#2a3542', txt: '#8b98a5', desc: '悬空（未被驱动）— 注意：屏幕等高阻输入外设即使插着也是这个状态' },
+    H: { fill: '#185FA5', txt: '#ffffff', desc: '被外部拉高 — 挂着东西，输出高电平' },
+    L: { fill: '#854F0B', txt: '#ffffff', desc: '被外部拉低 — 挂着东西，输出低电平/接地' },
+    g: { fill: '#f85149', txt: '#ffffff', desc: '强拉低 — 开了上拉还是低，疑似对地短路或外设顶死' },
+    h: { fill: '#f85149', txt: '#ffffff', desc: '强拉高 — 开了下拉还是高，疑似接了电源' }
+  };
+  const POWER_PIN = {
+    '3V3': { fill: '#a32d2d', txt: '#ffffff', desc: '3.3V 电源输出' },
+    '5V':  { fill: '#854F0B', txt: '#ffffff', desc: '5V 电源输入' },
+    'GND': { fill: '#55606b', txt: '#ffffff', desc: '地线' },
+    'RST': { fill: '#534AB7', txt: '#ffffff', desc: '复位键' },
+    'TX':  { fill: '#3a4757', txt: '#5d6b7a', desc: 'UART0 日志发送（系统占用）' },
+    'RX':  { fill: '#3a4757', txt: '#5d6b7a', desc: 'UART0 日志接收（系统占用）' }
+  };
+
+  function parsePinRaw(raw) {
+    const m = {};
+    String(raw || '').split(/\s+/).forEach(t => {
+      const mm = t.match(/^IO(\d+)=([a-zA-Z])$/);
+      if (mm) m[+mm[1]] = mm[2];
+    });
+    return m;
+  }
+
+  function renderPinMap() {
+    const host = document.getElementById('pinmap');
+    const r2 = S.results.get(2);
+    const r3 = S.results.get(3);
+
+    if (!r2) {
+      host.innerHTML = '<div class="card"><div class="empty">引脚图要等「引脚普查」阶段的数据</div></div>';
+      return;
+    }
+
+    const states = parsePinRaw(r2.raw);
+    const i2c = new Set();
+    if (r3 && String(r3.verdict).toLowerCase() === 'pass' && Array.isArray(r3.pins)) {
+      r3.pins.forEach(p => {
+        const m = String(p).match(/SDA=(\d+)/), n = String(p).match(/SCL=(\d+)/);
+        if (m) i2c.add(+m[1]);
+        if (n) i2c.add(+n[1]);
+      });
+    }
+
+    const ROW_H = 17, X0 = 118, X1 = 424, W = 92, Y0 = 78;
+    let svg = `<svg viewBox="0 0 680 ${Y0 + PIN_LAYOUT.left.length * ROW_H + 8}" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">`;
+    svg += `<rect x="112" y="70" width="416" height="${PIN_LAYOUT.left.length * ROW_H + 2}" rx="10" fill="#17222b" stroke="#2a3542" stroke-width="0.8"/>`;
+    svg += `<rect x="290" y="76" width="60" height="10" rx="3" fill="#3a4757"/>`;
+    svg += `<rect x="252" y="150" width="136" height="150" rx="8" fill="#1f2b36" stroke="#3a4757" stroke-width="0.8"/>`;
+    svg += `<text x="320" y="216" text-anchor="middle" font-size="13" fill="#8b98a5" font-family="ui-monospace,monospace">ESP32-S3</text>`;
+    svg += `<text x="320" y="236" text-anchor="middle" font-size="10" fill="#5d6b7a" font-family="ui-monospace,monospace">盲探 v1</text>`;
+    svg += `<text x="320" y="256" text-anchor="middle" font-size="10" fill="#5d6b7a" font-family="ui-monospace,monospace">已探测 ${Object.keys(states).length} 根</text>`;
+
+    const drawSide = (side, pins) => {
+      pins.forEach((label, idx) => {
+        const y = Y0 + idx * ROW_H;
+        const x = side === 'left' ? X0 : X1;
+        const num = parseInt(label, 10);
+        const isGpio = !isNaN(num) && String(num) === label;
+        let fill, txtc, desc;
+
+        if (!isGpio) {
+          const p = POWER_PIN[label] || { fill: '#3a4757', txt: '#5d6b7a', desc: label };
+          fill = p.fill; txtc = p.txt; desc = p.desc;
+        } else if (SYSTEM_PIN[num]) {
+          fill = '#232e3a'; txtc = '#5d6b7a';
+          desc = 'GPIO' + num + ' · 系统占用（' + SYSTEM_PIN[num] + '），未探测';
+        } else if (states[num] !== undefined) {
+          const info = STATE_INFO[states[num]] || STATE_INFO.F;
+          fill = info.fill; txtc = info.txt; desc = 'GPIO' + num + ' · ' + info.desc;
+          if (i2c.has(num)) {
+            desc = 'GPIO' + num + ' · I2C 总线脚（有设备应答）';
+            fill = '#0F6E56'; txtc = '#ffffff';
+          }
+        } else {
+          fill = '#1b222b'; txtc = '#5d6b7a'; desc = 'GPIO' + num + ' · 未在探测列表';
+        }
+
+        svg += `<g><title>${esc(desc)}</title>`;
+        svg += `<rect x="${x}" y="${y}" width="${W}" height="${ROW_H - 3}" rx="3" fill="${fill}" stroke="#0d1014" stroke-width="0.6"/>`;
+        svg += `<text x="${x + W / 2}" y="${y + (ROW_H - 3) / 2}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="${txtc}" font-family="ui-monospace,monospace">${esc(label)}</text>`;
+        svg += `</g>`;
+      });
+    };
+    drawSide('left', PIN_LAYOUT.left);
+    drawSide('right', PIN_LAYOUT.right);
+    svg += '</svg>';
+
+    const legend = [
+      ['#185FA5', '被外部拉高（挂着东西）'],
+      ['#854F0B', '被外部拉低（接地）'],
+      ['#2a3542', '悬空/未被驱动（高阻外设插着也算）'],
+      ['#f85149', '疑似短路'],
+      ['#0F6E56', 'I2C 总线脚（有设备应答）'],
+      ['#232e3a', '系统占用，不探测']
+    ].map(([c, t]) => `<span class="lg"><i style="background:${c}"></i>${t}</span>`).join('');
+
+    host.innerHTML = `<div class="card" style="padding:10px">${svg}
+      <div style="padding:8px 6px 4px">${legend}</div>
+      <div style="padding:0 6px 6px;font-size:11px;color:var(--dim2)">板型画的是常见 DevKit 布局，你的板子丝印为准；鼠标悬停针脚可看说明。共探测 ${Object.keys(states).length} 根引脚。</div>
+    </div>`;
+  }
+
+
+  /* ---------------- 导出 ---------------- */
+
+  function stamp() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function sortedResults() {
+    return [...S.results.values()].sort((a, b) => a.stage - b.stage);
+  }
+
+  function buildMarkdown() {
+    const rows = sortedResults();
+    const pass = rows.filter(r => verdictOf(r.verdict).cls === 'pass').length;
+    const fail = rows.filter(r => verdictOf(r.verdict).cls === 'fail').length;
+    const warn = rows.filter(r => verdictOf(r.verdict).cls === 'warn').length;
+
+    let md = '# ESP32 盲探体检报告\n\n';
+    md += `- 生成时间：${stamp()}\n`;
+    md += `- 串口：${S.portLabel || '示例数据（未连接设备）'}\n`;
+    md += `- 完成阶段：${rows.length}/${STAGE_TOTAL}\n`;
+    md += `- 统计：通过 ${pass} · 注意 ${warn} · 未通过 ${fail}\n\n`;
+    md += '| 阶段 | 结论 | 判定 | 引脚 | 说明 |\n';
+    md += '|---|---|---|---|---|\n';
+    rows.forEach(r => {
+      const v = verdictOf(r.verdict);
+      const pins = Array.isArray(r.pins) ? r.pins.join(' ') : (r.pins || '');
+      md += `| ${r.stage} | ${r.title} | ${v.mark} ${v.label} | ${pins || '—'} | ${(r.detail || '').replace(/\|/g, '\\|')} |\n`;
+    });
+
+    const r2 = S.results.get(2);
+    if (r2) {
+      const st = parsePinRaw(r2.raw);
+      const names = { F: '悬空', H: '外部拉高', L: '外部拉低', g: '强拉低', h: '强拉高' };
+      md += '\n## 引脚状态\n\n| 引脚 | 状态 |\n|---|---|\n';
+      Object.keys(st).map(Number).sort((a, b) => a - b).forEach(n => {
+        md += `| GPIO${n} | ${names[st[n]] || st[n]} |\n`;
+      });
+    }
+    md += '\n## 原始串口输出\n\n```\n' + S.rawLines.join('\n') + '\n```\n';
+    return md;
+  }
+
+  function buildJson() {
+    return JSON.stringify({
+      tool: 'esp32-blind-probe · web console',
+      generatedAt: new Date().toISOString(),
+      port: S.portLabel || null,
+      userAgent: navigator.userAgent,
+      complete: S.results.size === STAGE_TOTAL,
+      // 统计只算 1~5 阶段：第 6 阶段本身就是汇总，算进去会重复计数
+      summary: sortedResults().filter(r => r.stage !== STAGE_TOTAL).reduce((a, r) => {
+        const k = verdictOf(r.verdict).cls;
+        a[k] = (a[k] || 0) + 1;
+        return a;
+      }, {}),
+      stages: sortedResults(),
+      rawLines: S.rawLines
+    }, null, 2);
+  }
+
+  function download(name, text, mime) {
+    const blob = new Blob([text], { type: mime + ';charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function fileName(ext) {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `report-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  }
+
+  /* ---------------- 事件绑定 ---------------- */
+
+  el.btnConnect.addEventListener('click', connect);
+  el.btnRun.addEventListener('click', async () => {
+    if (!S.connected) return;
+    S.results.clear();
+    S.rawLines = [];
+    render();
+    const ok = await sendLine('r');
+    setStatus(ok ? '已发送重跑命令 · 等结果' : '发送失败：这个串口不可写', ok ? 'on' : 'err');
+  });
+  el.btnDisconnect.addEventListener('click', async () => { await teardown(true); });
+  el.btnDemo.addEventListener('click', runDemo);
+  el.btnMd.addEventListener('click', () => download(fileName('md'), buildMarkdown(), 'text/markdown'));
+  el.btnJson.addEventListener('click', () => download(fileName('json'), buildJson(), 'application/json'));
+  el.btnClear.addEventListener('click', () => {
+    S.results.clear();
+    S.rawLines = [];
+    render();
+    if (S.connected) setStatus('已连接 · 等待数据', 'on');
+    else setStatus('未连接', '');
+  });
+
+  if (supportsSerial) {
+    navigator.serial.addEventListener('disconnect', e => {
+      if (S.port && e.target === S.port) onPortGone();
+    });
+  } else {
+    el.btnConnect.disabled = true;
+    setStatus('此浏览器不支持 Web Serial', 'err');
+  }
+
+  // 页面加载即渲染空状态；不连板子也不报错
+  render();
+
+  // 调试/自动化用的注入接口：window.__probeFeed('##RESULT {...}')
+  // 不连串口也能验证解析链路，纯本地，不影响正常使用
+  window.__probeFeed = line => handleLine(String(line));
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+node_modules/
+*.log
+preview*.png
+firmware/**/build/
